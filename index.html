@@ -1,0 +1,766 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Presensi QR Code</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #eef2f7;
+      color: #0d1b3d;
+    }
+
+    .container {
+      max-width: 520px;
+      margin: 30px auto;
+      background: white;
+      padding: 25px;
+      border-radius: 18px;
+      box-shadow: 0 5px 25px rgba(0,0,0,.08);
+      text-align: center;
+    }
+
+    .header {
+      margin-bottom: 20px;
+    }
+
+    .header h2 {
+      margin: 0;
+      font-size: 25px;
+      color: #0d1b3d;
+    }
+
+    .header p {
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .camera-label {
+      text-align: left;
+      font-size: 13px;
+      font-weight: bold;
+      margin-top: 20px;
+      display: block;
+    }
+
+    select {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid #ddd;
+      border-radius: 9px;
+      margin-top: 8px;
+      background: white;
+      font-size: 14px;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      border: none;
+      border-radius: 9px;
+      background: #008c9e;
+      color: white;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #007583;
+    }
+
+    button:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+
+    #reader {
+      width: 100%;
+      margin-top: 20px;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+
+    #hasil {
+      padding: 18px;
+      margin-top: 20px;
+      border-radius: 12px;
+      background: #f1f5f9;
+      font-size: 15px;
+      line-height: 1.7;
+      overflow-wrap: anywhere;
+      white-space: pre-line;
+    }
+
+    .success {
+      background: #dcfce7 !important;
+      color: #166534;
+    }
+
+    .error {
+      background: #fee2e2 !important;
+      color: #991b1b;
+    }
+
+    .info {
+      background: #f1f5f9 !important;
+      color: #0d1b3d;
+    }
+
+    .footer {
+      margin-top: 25px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+
+    .hidden-frame {
+      display: none;
+    }
+
+    @media(max-width: 480px) {
+      body {
+        padding: 10px;
+      }
+
+      .container {
+        margin: 10px auto;
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <h2>PRESENSI QR CODE</h2>
+    <p>Silakan scan QR Code tiket peserta</p>
+  </div>
+
+  <label class="camera-label">
+    Pilih Kamera
+  </label>
+
+  <select id="kamera">
+    <option value="">Memuat kamera...</option>
+  </select>
+
+  <button id="mulai" onclick="mulaiScanner()">
+    MULAI SCAN
+  </button>
+
+  <button
+    id="berhenti"
+    onclick="berhentiScanner()"
+    style="background:#64748b"
+    disabled
+  >
+    BERHENTI
+  </button>
+
+  <div id="reader"></div>
+
+  <div id="hasil" class="info">
+    Menyiapkan aplikasi presensi...
+  </div>
+
+  <div class="footer">
+    DIGITAL ATTENDANCE SYSTEM
+  </div>
+
+</div>
+
+<!-- Frame untuk menerima POST Apps Script -->
+<iframe
+  name="presensiFrame"
+  id="presensiFrame"
+  class="hidden-frame">
+</iframe>
+
+
+<script>
+
+// ========================================
+// KONFIGURASI APPS SCRIPT
+// ========================================
+
+const API_URL =
+  'https://script.google.com/macros/s/AKfycbx04kY_ht7-9qTELTM319eUxKYuXRIcLODRXkMOxbWx449LGaIYIk5yGtlCLUHqxqWCIA/exec';
+
+
+// ========================================
+// VARIABEL
+// ========================================
+
+let scanner = null;
+let busy = false;
+let active = false;
+let kameraSiap = false;
+
+const kameraSelect = document.getElementById('kamera');
+const hasil = document.getElementById('hasil');
+const tombolMulai = document.getElementById('mulai');
+const tombolBerhenti = document.getElementById('berhenti');
+
+
+// ========================================
+// TAMPILAN STATUS
+// ========================================
+
+function tampil(pesan, tipe = 'info') {
+  hasil.className = tipe;
+  hasil.textContent = pesan;
+}
+
+
+// ========================================
+// MEMBUAT REQUEST ID
+// ========================================
+
+function buatRequestId() {
+  return 'req_' +
+    Date.now() + '_' +
+    Math.random().toString(36).slice(2);
+}
+
+
+// ========================================
+// DETEKSI KAMERA
+// ========================================
+
+async function daftarKamera() {
+
+  try {
+
+    const devices = await Html5Qrcode.getCameras();
+
+    kameraSelect.innerHTML = '';
+
+    if (!devices || devices.length === 0) {
+      throw new Error('Tidak ada kamera ditemukan.');
+    }
+
+    devices.forEach((device, index) => {
+
+      const option = document.createElement('option');
+
+      option.value = device.id;
+
+      option.textContent =
+        device.label || 'Kamera ' + (index + 1);
+
+      kameraSelect.appendChild(option);
+
+    });
+
+    // Prioritaskan kamera belakang
+    const backCamera = devices.find(device =>
+      /back|rear|environment|belakang/i.test(device.label)
+    );
+
+    if (backCamera) {
+      kameraSelect.value = backCamera.id;
+    }
+
+    kameraSiap = true;
+
+    tampil(
+      'Kamera ditemukan. Tekan MULAI SCAN untuk memulai.',
+      'success'
+    );
+
+  } catch (error) {
+
+    kameraSiap = false;
+
+    tampil(
+      'Tidak dapat mengakses kamera.\n' +
+      error.message,
+      'error'
+    );
+
+    console.error('KAMERA ERROR:', error);
+
+  }
+
+}
+
+
+// ========================================
+// MULAI SCANNER
+// ========================================
+
+async function mulaiScanner() {
+
+  if (busy || active) return;
+
+  if (!kameraSiap) {
+    await daftarKamera();
+  }
+
+  if (!kameraSelect.value) {
+    tampil('Silakan pilih kamera terlebih dahulu.', 'error');
+    return;
+  }
+
+  try {
+
+    tombolMulai.disabled = true;
+    tombolBerhenti.disabled = true;
+
+    if (!scanner) {
+      scanner = new Html5Qrcode('reader');
+    }
+
+    await scanner.start(
+
+      kameraSelect.value,
+
+      {
+        fps: 10,
+        qrbox: {
+          width: 250,
+          height: 250
+        },
+        aspectRatio: 1.0
+      },
+
+      async function(decodedText) {
+
+        if (busy || !active) return;
+
+        busy = true;
+
+        console.log('========== QR TERDETEKSI ==========');
+        console.log('Isi QR mentah:', decodedText);
+
+        try {
+
+          await scanner.stop();
+
+          active = false;
+
+          tombolBerhenti.disabled = true;
+
+          await simpanPresensi(decodedText);
+
+        } catch(error) {
+
+          active = false;
+
+          console.error('SCANNER ERROR:', error);
+
+          tampil(
+            'Gagal memproses kamera: ' + error.message,
+            'error'
+          );
+
+          setTimeout(() => {
+            busy = false;
+            mulaiScanner();
+          }, 2500);
+
+        }
+
+      }
+
+    );
+
+    active = true;
+
+    tampil(
+      'KAMERA AKTIF\nArahkan QR Code ke kamera.',
+      'success'
+    );
+
+    tombolBerhenti.disabled = false;
+
+  } catch(error) {
+
+    active = false;
+
+    console.error('GAGAL MEMULAI KAMERA:', error);
+
+    tampil(
+      'Gagal membuka kamera:\n' + error.message,
+      'error'
+    );
+
+  } finally {
+
+    tombolMulai.disabled = false;
+
+  }
+
+}
+
+
+// ========================================
+// BERHENTI SCANNER
+// ========================================
+
+async function berhentiScanner() {
+
+  if (scanner && active) {
+
+    try {
+
+      await scanner.stop();
+
+      active = false;
+
+      tampil('Scanner dihentikan.');
+
+    } catch(error) {
+
+      console.error(error);
+
+      tampil('Gagal menghentikan kamera.', 'error');
+
+    }
+
+  }
+
+  tombolBerhenti.disabled = true;
+
+}
+
+
+// ========================================
+// GANTI KAMERA
+// ========================================
+
+kameraSelect.addEventListener('change', async function() {
+
+  if (active && scanner) {
+
+    await scanner.stop();
+
+    active = false;
+
+    tombolBerhenti.disabled = true;
+
+    tampil('Kamera berubah. Tekan MULAI SCAN.');
+
+  }
+
+});
+
+
+// ========================================
+// VALIDASI ID TIKET
+// FORMAT: EGS-00002
+// ========================================
+
+function validasiID(id) {
+
+  return /^EGS-\d{5}$/.test(id);
+
+}
+
+
+// ========================================
+// SIMPAN PRESENSI
+// ========================================
+
+async function simpanPresensi(decodedText) {
+
+  // Bersihkan spasi dan karakter baris baru
+  const id = String(decodedText || '').trim();
+
+  console.log('========== DIAGNOSTIK PRESENSI ==========');
+  console.log('QR terbaca:', id);
+  console.log('Panjang ID:', id.length);
+
+  tampil(
+    'MEMPROSES PRESENSI\n\nID Tiket: ' + (id || '(KOSONG)'),
+    'info'
+  );
+
+  try {
+
+    if (!validasiID(id)) {
+      throw new Error(
+        'Format QR tidak sesuai.\n' +
+        'Format yang diharapkan: EGS-00002\n' +
+        'QR terbaca: ' + id
+      );
+    }
+
+    const requestId = buatRequestId();
+
+    console.log('Request ID:', requestId);
+
+    // Membuat form POST
+    const form = document.createElement('form');
+
+    form.method = 'POST';
+    form.action = API_URL;
+    form.target = 'presensiFrame';
+    form.enctype = 'application/x-www-form-urlencoded';
+    form.style.display = 'none';
+
+    // Input ID tiket
+    const inputID = document.createElement('input');
+
+    inputID.type = 'hidden';
+    inputID.name = 'id';
+    inputID.value = id;
+
+    // Input Request ID
+    const inputRequest = document.createElement('input');
+
+    inputRequest.type = 'hidden';
+    inputRequest.name = 'requestId';
+    inputRequest.value = requestId;
+
+    form.appendChild(inputID);
+    form.appendChild(inputRequest);
+
+    document.body.appendChild(form);
+
+    console.log('Form ID:', inputID.value);
+    console.log('Form Request ID:', inputRequest.value);
+    console.log('Tujuan POST:', form.action);
+
+    // Kirim ke Apps Script
+    form.submit();
+
+    console.log('Form POST berhasil dipicu.');
+
+    form.remove();
+
+    // Periksa hasil penyimpanan
+    const status = await cekStatus(requestId);
+
+    console.log('Status server:', status);
+
+    if (status === 'SUCCESS') {
+
+      tampil(
+        '✓ PRESENSI BERHASIL\n\n' +
+        'ID Tiket: ' + id +
+        '\nData berhasil disimpan.',
+        'success'
+      );
+
+    } else if (status === 'DUPLICATE') {
+
+      tampil(
+        '⚠ TIKET SUDAH DIGUNAKAN\n\n' +
+        'ID Tiket: ' + id +
+        '\nPresensi tidak dicatat ulang.',
+        'error'
+      );
+
+    } else {
+
+      throw new Error(status);
+
+    }
+
+  } catch(error) {
+
+    console.error('PRESENSI ERROR:', error);
+
+    tampil(
+      'GAGAL MENYIMPAN PRESENSI\n\n' +
+      error.message,
+      'error'
+    );
+
+  } finally {
+
+    setTimeout(() => {
+
+      busy = false;
+
+      if (!active) {
+        mulaiScanner();
+      }
+
+    }, 3000);
+
+  }
+
+}
+
+
+// ========================================
+// CEK STATUS SERVER (JSONP)
+// ========================================
+
+function cekStatus(requestId) {
+
+  return new Promise((resolve, reject) => {
+
+    let percobaan = 0;
+    let selesai = false;
+    let timer;
+    let timeoutUtama;
+    let currentScript = null;
+
+    const callbackName =
+      'cb_' + Date.now() + '_' +
+      Math.random().toString(36).slice(2);
+
+    function cleanup() {
+
+      selesai = true;
+
+      clearTimeout(timer);
+      clearTimeout(timeoutUtama);
+
+      if (currentScript) {
+        currentScript.remove();
+      }
+
+      delete window[callbackName];
+
+    }
+
+    // Fungsi callback JSONP
+    window[callbackName] = function(data) {
+
+      if (selesai) return;
+
+      console.log('Respons JSONP:', data);
+
+      if (!data || !data.status) {
+        cleanup();
+        reject(new Error('Respons server tidak valid.'));
+        return;
+      }
+
+      if (data.status === 'PENDING') {
+
+        if (percobaan < 25) {
+
+          if (currentScript) {
+            currentScript.remove();
+            currentScript = null;
+          }
+
+          timer = setTimeout(request, 800);
+
+        } else {
+
+          cleanup();
+
+          reject(
+            new Error('Waktu tunggu server habis.')
+          );
+
+        }
+
+        return;
+
+      }
+
+      cleanup();
+
+      if (
+        data.status === 'SUCCESS' ||
+        data.status === 'DUPLICATE'
+      ) {
+
+        resolve(data.status);
+
+      } else {
+
+        reject(new Error(data.status));
+
+      }
+
+    };
+
+
+    // Meminta status ke Apps Script
+    function request() {
+
+      if (selesai) return;
+
+      percobaan++;
+
+      console.log(
+        'Memeriksa status server, percobaan:',
+        percobaan
+      );
+
+      const script = document.createElement('script');
+
+      currentScript = script;
+
+      script.src = API_URL +
+        '?requestId=' + encodeURIComponent(requestId) +
+        '&callback=' + encodeURIComponent(
+          'window.' + callbackName
+        ) +
+        '&t=' + Date.now();
+
+      script.onerror = function() {
+
+        if (selesai) return;
+
+        cleanup();
+
+        reject(
+          new Error(
+            'Tidak dapat menghubungi server Apps Script.'
+          )
+        );
+
+      };
+
+      document.body.appendChild(script);
+
+    }
+
+
+    // Batas waktu keseluruhan
+    timeoutUtama = setTimeout(() => {
+
+      if (!selesai) {
+
+        cleanup();
+
+        reject(
+          new Error('Server tidak memberikan respons.')
+        );
+
+      }
+
+    }, 25000);
+
+    request();
+
+  });
+
+}
+
+
+// ========================================
+// INISIALISASI APLIKASI
+// ========================================
+
+window.addEventListener('load', daftarKamera);
+
+</script>
+
+</body>
+</html>
